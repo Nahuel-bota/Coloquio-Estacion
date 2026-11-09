@@ -1,0 +1,99 @@
+import socket
+import threading
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+# ==========================================
+# CONFIGURACIÓN DE RED (SERVIDOR LIBRE)
+# ==========================================
+HOST = '0.0.0.0' 
+PORT = 5000
+
+# Variables globales para alimentar el gráfico
+tiempos_x = []
+temperaturas_y = []
+contador_tiempo = 0
+
+# ==========================================
+# HILO RECEPTOR DE DATOS (Sin Filtro)
+# ==========================================
+def recibir_datos():
+    global contador_tiempo
+    
+    servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+    servidor.bind((HOST, PORT))
+    servidor.listen(1)
+    
+    print(f"--- SERVIDOR GRÁFICO INICIADO ---")
+    print(f"Esperando conexiones de cualquier PC en el puerto {PORT}...")
+    
+    while True: 
+        try:
+            # Acepta cualquier conexión entrante
+            conn, addr = servidor.accept()
+            ip_cliente = addr[0]
+                
+            print(f"\n[RED] ¡Computadora conectada desde {ip_cliente}!\n")
+            
+            while True: 
+                datos_crudos = conn.recv(1024).decode('utf-8')
+                if not datos_crudos:
+                    print(f"\n[RED] La PC ({ip_cliente}) se ha desconectado. Esperando nueva conexión...")
+                    break
+                    
+                partes = datos_crudos.strip().split(',')
+                
+                if len(partes) == 2:
+                    try:
+                        temp_float = float(partes[0])
+                        tendencia = partes[1]
+                        
+                        print(f"Graficando -> Temp: {temp_float}°C | Tendencia: {tendencia}")
+                        
+                        tiempos_x.append(contador_tiempo)
+                        temperaturas_y.append(temp_float)
+                        
+                        if len(tiempos_x) > 30:
+                            tiempos_x.pop(0)
+                            temperaturas_y.pop(0)
+                            
+                        contador_tiempo += 1
+                    except ValueError:
+                        pass 
+
+        except Exception as e:
+            print(f"Error de red: {e}")
+            break
+
+# ==========================================
+# FUNCIÓN DE ANIMACIÓN DE MATPLOTLIB
+# ==========================================
+def actualizar_grafico(frame):
+    ax.clear()
+    ax.plot(tiempos_x, temperaturas_y, color='red', marker='o', linestyle='-', linewidth=2)
+    
+    ax.set_title("Estación de Monitoreo - Tiempo Real", fontsize=14, fontweight='bold')
+    ax.set_xlabel("N° de Muestras recibidas")
+    ax.set_ylabel("Temperatura (°C)")
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    if len(temperaturas_y) > 0:
+        min_y = min(temperaturas_y) - 2.0
+        max_y = max(temperaturas_y) + 2.0
+        ax.set_ylim(min_y, max_y)
+
+# ==========================================
+# EJECUCIÓN PRINCIPAL
+# ==========================================
+if __name__ == '__main__':
+    hilo_red = threading.Thread(target=recibir_datos, daemon=True)
+    hilo_red.start()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    fig.canvas.manager.set_window_title('Monitor de Temperatura TCP/IP')
+
+    ani = animation.FuncAnimation(fig, actualizar_grafico, interval=500, cache_frame_data=False)
+
+    plt.tight_layout()
+    plt.show()
