@@ -3,97 +3,131 @@ import threading
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-# ==========================================
-# CONFIGURACIÓN DE RED (SERVIDOR LIBRE)
-# ==========================================
-HOST = '0.0.0.0' 
-PORT = 5000
+# =========================================================
+# CONFIGURACIÓN DE RED (SERVIDOR TCP)
+# =========================================================
+# HOST = '0.0.0.0' indica que escuchará conexiones desde cualquier IP en la red local
+HOST = '0.0.0.0'
+PORT = 5000      # Puerto de comunicación TCP asignado
 
-# Variables globales para alimentar el gráfico
-tiempos_x = []
-temperaturas_y = []
-contador_tiempo = 0
+# Variables globales
+tiempos_x = []       # Almacena el eje X
+temperaturas_y = []  # Almacena el eje Y (valores de temperatura)
+contador_tiempo = 0  # Índice que aumenta con cada paquete recibido
 
-# ==========================================
-# HILO RECEPTOR DE DATOS (Sin Filtro)
-# ==========================================
+# =========================================================
+# HILO RECEPTOR DE DATOS
+# =========================================================
 def recibir_datos():
     global contador_tiempo
     
+    # Inicialización del objeto socket TCP/IPv4
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+    
+    # SO_REUSEADDR libera el puerto inmediatamente al cerrar el programa para evitar conflictos y permitir reconexiones rápidas
+    servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    # Asigna (bind) el objeto socket a la IP y puerto definidos
     servidor.bind((HOST, PORT))
+    
+    # El servidor se pone a la escucha (1 cliente máximo en la sala de espera)
     servidor.listen(1)
     
     print(f"--- SERVIDOR GRÁFICO INICIADO ---")
-    print(f"Esperando conexiones de cualquier PC en el puerto {PORT}...")
+    print(f"Esperando conexion de PC en el puerto {PORT}...")
     
-    while True: 
+    while True: # Bucle infinito
         try:
-            # Acepta cualquier conexión entrante
+            # .accept() el hilo se pausa aquí hasta que un cliente se conecte
+            # Devuelve 'conn' (el canal de comunicación) y 'addr' (la IP y puerto del cliente)
             conn, addr = servidor.accept()
-            ip_cliente = addr[0]
-                
-            print(f"\n[RED] ¡Computadora conectada desde {ip_cliente}!\n")
+            ip_PCesp = addr[0]
             
-            while True: 
+            print(f"\n[RED] ¡Computadora conectada desde {ip_PCesp}!\n")
+            
+            while True: # Bucle infinito Ciclo de lectura continua de datos del cliente conectado
+                
+                # Recibe hasta 1024 bytes del canal y los decodifica de sistema binario a texto legible (UTF-8)
                 datos_crudos = conn.recv(1024).decode('utf-8')
+                
+                # Si .recv() retorna vacío, significa que el cliente cerró la conexión del otro lado
                 if not datos_crudos:
-                    print(f"\n[RED] La PC ({ip_cliente}) se ha desconectado. Esperando nueva conexión...")
+                    print(f"\n[RED] La PC ({ip_PCesp}) se ha desconectado. Esperando nueva conexión...")
                     break
                     
+                # Limpia caracteres con .strip() y separa el texto por la coma
                 partes = datos_crudos.strip().split(',')
                 
+                # Verifica que el paquete de datos llegó completo (Temperatura y Tendencia)
                 if len(partes) == 2:
                     try:
+                        # Extrae el texto, lo convierte a número decimal (float)
                         temp_float = float(partes[0])
-                        tendencia = partes[1]
                         
-                        print(f"Graficando -> Temp: {temp_float}°C | Tendencia: {tendencia}")
-                        
+                        # Introducimos los nuevos datos en las listas globales que lee Matplotlib
                         tiempos_x.append(contador_tiempo)
                         temperaturas_y.append(temp_float)
                         
+                        # Ventana deslizante: Mantiene solo las últimas 30 muestras en pantalla.
+                        # Si superamos las 30, eliminamos el dato más viejo (índice 0) de ambas listas
+                        # para evitar saturar la memoria RAM.
                         if len(tiempos_x) > 30:
                             tiempos_x.pop(0)
                             temperaturas_y.pop(0)
                             
-                        contador_tiempo += 1
+                        contador_tiempo += 1 # Prepara el índice en el eje X para la siguiente lectura
                     except ValueError:
-                        pass 
-
+                        pass
+                        
         except Exception as e:
+            # Captura y muestra cualquier error
             print(f"Error de red: {e}")
             break
 
-# ==========================================
-# FUNCIÓN DE ANIMACIÓN DE MATPLOTLIB
-# ==========================================
+# =========================================================
+# FUNCIÓN MATPLOTLIB (Renderizado Gráfico)
+# =========================================================
 def actualizar_grafico(frame):
+    # .clear() borra el dibujo anterior del lienzo ('ax').
     ax.clear()
+    
+    # Plotea (dibuja) los arreglos globales
+    # color='red' (línea roja), marker='o' (puntos redondos en cada medición),
+    # linestyle='-' (línea continua uniendo los puntos), linewidth=2 (grosor de la línea)
     ax.plot(tiempos_x, temperaturas_y, color='red', marker='o', linestyle='-', linewidth=2)
     
-    ax.set_title("Estación de Monitoreo - Tiempo Real", fontsize=14, fontweight='bold')
-    ax.set_xlabel("N° de Muestras recibidas")
-    ax.set_ylabel("Temperatura (°C)")
-    ax.grid(True, linestyle='--', alpha=0.7)
+    # Configuración estética de la interfaz
+    ax.set_title("Estación Tiempo Real", fontsize=14, fontweight='bold') # Título principal
+    ax.set_xlabel("N° de Muestras recibidas") # Etiqueta del eje X
+    ax.set_ylabel("Temperatura (°C)")         # Etiqueta del eje Y
+    ax.grid(True, linestyle='--', alpha=0.7)  # Activa una cuadrícula de fondo, punteada y algo transparente
     
+    # Lógica de auto-escalado dinámico del Eje Y
+    # Si ya recibimos al menos un dato, adaptamos el "zoom" vertical
     if len(temperaturas_y) > 0:
+        # Forzamos que la ventana gráfica abarque siempre 2°C por debajo de la mínima actual...
         min_y = min(temperaturas_y) - 2.0
+        # ...y 2°C por encima de la máxima actual, manteniendo la curva de temperatura bien centrada.
         max_y = max(temperaturas_y) + 2.0
         ax.set_ylim(min_y, max_y)
 
-# ==========================================
+# =========================================================
 # EJECUCIÓN PRINCIPAL
-# ==========================================
+# =========================================================
 if __name__ == '__main__':
+    # 1. Arranca el servidor de red en un hilo secundario concurrente (Threading)
+    # daemon=True indica que si cerramos la ventana del gráfico (hilo principal),
+    # el hilo de red se debe apagar automáticamente.
     hilo_red = threading.Thread(target=recibir_datos, daemon=True)
     hilo_red.start()
-
+    
+    # 2. Creación de la ventana principal y el lienzo (Axes) de Matplotlib
+    # fig: es la ventana
+    # ax: es el recuadro blanco adentro de la ventana donde se dibuja el gráfico.
+    # figsize=(8, 5) define el tamaño inicial de la ventana
     fig, ax = plt.subplots(figsize=(8, 5))
-    fig.canvas.manager.set_window_title('Monitor de Temperatura TCP/IP')
-
-    ani = animation.FuncAnimation(fig, actualizar_grafico, interval=500, cache_frame_data=False)
-
-    plt.tight_layout()
-    plt.show()
+    fig.canvas.manager.set_window_title('Monitor de Temperatura TCP/IP') # Cambia el nombre de la barra de título de la ventana
+    
+    # 3. Ejecuta el bucle de renderizado infinito
+    # FuncAnimation llama automáticamente a nuestra función 'actualizar_grafico'
+    # cada
